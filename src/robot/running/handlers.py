@@ -20,7 +20,8 @@ from robot.variables import contains_var, is_list_var
 
 from .arguments import (PythonArgumentParser, JavaArgumentParser,
                         DynamicArgumentParser, ArgumentResolver,
-                        ArgumentMapper, JavaArgumentCoercer)
+                        ArgumentMapper, JavaArgumentCoercer,
+                        EmbeddedArguments)
 from .keywords import Keywords, Keyword
 from .outputcapture import OutputCapturer
 from .runkwregister import RUN_KW_REGISTER
@@ -399,3 +400,49 @@ class _JavaInitHandler(_JavaHandler):
         parser = JavaArgumentParser(type='Test Library')
         signatures = self._get_signatures(handler_method)
         return parser.parse(signatures, self.library.name)
+
+
+def make_embedded_args_template(library, name, method, embedded, orig_handler):
+    embedded_args_template = type('EmbeddedArgsTemplate', (orig_handler.__class__,), dict(EmbeddedArgsTemplate.__dict__))
+    return embedded_args_template(library, name, method, embedded, orig_handler)
+
+
+class EmbeddedArgsTemplate(object):
+
+    def __init__(self, library, handler_name, handler_method, embedded, orig_handler):
+        orig_handler.__class__.__init__(self, library, handler_name, handler_method)
+        self.embedded_name = embedded.name
+        self.embedded_args = embedded.args
+
+    def matches(self, name):
+        return self.embedded_name.match(name) is not None
+
+    def create(self, name):
+        return make_embedded_args(name, self)
+
+
+def make_embedded_args(name, template):
+    embedded_args = type('EmbeddedArgs', template.__class__.__bases__, dict(EmbeddedArgs.__dict__))
+    return embedded_args(name, template)
+
+
+class EmbeddedArgs(object):
+
+    def __init__(self, name, template):
+        self.orig_handler_class = self.__class__.__bases__[0]
+        self.orig_handler_class.__init__(self, template.library, template.name, template._method)
+        match = template.embedded_name.match(name)
+        if not match:
+            raise ValueError('Does not match given name')
+        self.embedded_args = zip(template.embedded_args, match.groups())
+        self.name = name
+        self.orig_name = template.name
+
+    def _run(self, context, args):
+        args = [self] + [arg[1] for arg in self.embedded_args]
+        if not context.dry_run:
+            variables = context.variables
+            self.resolve_arguments(args, variables)  # validates no args given
+            for name, value in self.embedded_args:
+                variables['${%s}' % name] = variables.replace_scalar(value)
+        return self.orig_handler_class._run(self, context, args)
