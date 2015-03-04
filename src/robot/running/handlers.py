@@ -395,6 +395,7 @@ class EmbeddedArgsTemplate(object):
     def create(self, name):
         return EmbeddedArgs(name, self)
 
+
 class EmbeddedArgs(object):
 
     def __init__(self, name, template):
